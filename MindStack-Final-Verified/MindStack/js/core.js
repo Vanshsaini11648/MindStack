@@ -1,0 +1,34 @@
+(()=>{"use strict";
+const KEY="mindstack.v1",defaults=()=>({schemaVersion:1,notes:[],folders:[],tags:[],tasks:[],bookmarks:[],cards:[],quizzes:[],sessions:[],activity:[],settings:{theme:"dark",accent:"#8b73f4",font:14},searches:[]});
+let data=defaults(), memoryBackup=null, storageMode="local";
+function readSaved(){
+  try { const v=localStorage.getItem(KEY); if(v){storageMode="local";return v;} } catch(e) { storageMode="session"; }
+  try { const v=sessionStorage.getItem(KEY); if(v){storageMode="session";return v;} } catch(e) { storageMode="memory"; }
+  return memoryBackup;
+}
+try { const raw=readSaved(); if(raw){const parsed=JSON.parse(raw);if(parsed.schemaVersion===1)data={...defaults(),...parsed,settings:{...defaults().settings,...parsed.settings}}} } catch(e) { console.error("MindStack could not read saved data:",e); }
+const $=(s,r=document)=>r.querySelector(s),$$=(s,r=document)=>Array.from(r.querySelectorAll(s)),id=p=>p+"_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,8),esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])),date=s=>s?new Date(s).toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"}):"No due date",ago=s=>{let m=Math.floor((Date.now()-new Date(s).getTime())/60000);return m<1?"just now":m<60?m+"m ago":m<1440?Math.floor(m/60)+"h ago":Math.floor(m/1440)+"d ago"};
+function save(){
+  const raw=JSON.stringify(data);
+  try { localStorage.setItem(KEY,raw); storageMode="local"; memoryBackup=raw; updateStorage(); return true; }
+  catch(localError) {
+    try { sessionStorage.setItem(KEY,raw); storageMode="session"; memoryBackup=raw; updateStorage(); toast("Browser storage is restricted; notes are saved for this tab session.","error"); return true; }
+    catch(sessionError) { memoryBackup=raw; storageMode="memory"; updateStorage(); toast("Browser storage is blocked. Notes work in this tab, but export a backup before closing it.","error"); return true; }
+  }
+}
+function mutate(fn){fn(data);save();if(window.renderCurrentIfReady)window.renderCurrentIfReady()}
+function toast(s,type="ok"){const n=document.createElement("div");n.className="toast "+(type==="error"?"error":"");n.textContent=s;$("#toasts").append(n);setTimeout(()=>n.remove(),3000)}
+function updateStorage(){let b=new Blob([JSON.stringify(data)]).size;$("#storage-label").textContent=(b/1024).toFixed(1)+" KB used · local only";$("#storage-bar").style.width=Math.min(100,b/5120000*100)+"%"}
+function activeNotes(){return data.notes.filter(n=>!n.deletedAt&&!n.archivedAt)}
+function noteCreate(v={}){let n={id:id("note"),title:v.title||"",body:v.body||"",folderId:v.folderId||"",tags:v.tags||[],createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),pinned:false,favorite:false,archivedAt:null,deletedAt:null,inbox:!!v.inbox,links:[],versions:[],language:v.language||""};mutate(d=>{d.notes.unshift(n);d.activity.unshift({label:n.title||"Untitled note",type:"Note created",at:n.createdAt})});return n.id}
+function noteSave(nid,v){mutate(d=>{let n=d.notes.find(x=>x.id===nid);if(!n)return;if(n.title!==v.title||n.body!==v.body){n.versions.unshift({title:n.title,body:n.body,at:new Date().toISOString()});n.versions=n.versions.slice(0,15)}Object.assign(n,v,{updatedAt:new Date().toISOString()})})}
+function noteList(view="notes",q="",sort="updated"){let a=data.notes.filter(n=>view==="trash"?!!n.deletedAt:!n.deletedAt);if(view!=="archive"&&view!=="trash")a=a.filter(n=>!n.archivedAt);if(view==="archive")a=a.filter(n=>n.archivedAt&&!n.deletedAt);if(view==="inbox")a=a.filter(n=>n.inbox);if(view==="favorites")a=a.filter(n=>n.favorite);if(view==="pinned")a=a.filter(n=>n.pinned);if(q){q=q.toLowerCase();a=a.filter(n=>(n.title+" "+n.body+" "+n.tags.join(" ")).toLowerCase().includes(q))}a.sort((x,y)=>sort==="title"?(x.title||"").localeCompare(y.title||""):sort==="created"?new Date(y.createdAt)-new Date(x.createdAt):new Date(y.updatedAt)-new Date(x.updatedAt));return a}
+function taskCreate(v){mutate(d=>d.tasks.unshift({id:id("task"),title:v.title,description:v.description||"",priority:v.priority||"medium",dueDate:v.dueDate||"",status:v.status||"todo",createdAt:new Date().toISOString(),completedAt:null,noteId:v.noteId||""}))}
+function bookmarkCreate(v){let u;try{u=new URL(v.url);if(!["http:","https:"].includes(u.protocol))throw 0}catch{throw Error("Enter a valid http or https URL.")}if(data.bookmarks.some(b=>b.url===u.href))throw Error("That URL is already saved.");mutate(d=>d.bookmarks.unshift({id:id("bookmark"),url:u.href,title:v.title||u.hostname,description:v.description||"",category:v.category||"Learning",tags:(v.tags||"").split(",").map(x=>x.trim()).filter(Boolean),favorite:false,createdAt:new Date().toISOString()}))}
+function modal(title,subtitle,form){let dlg=$("#modal"),host=$("#modal-content");if(!dlg||!host)throw Error("Dialog container is missing. Reload MindStack and try again.");if(dlg.open)dlg.close();host.innerHTML=`<div class="modalbox"><div class="pagehead"><div><h2>${esc(title)}</h2><p>${esc(subtitle||"")}</p></div><button class="icon" data-close>×</button></div>${form}</div>`;dlg.showModal();$("[data-close]",host).onclick=()=>dlg.close();return {dlg,host}}
+function confirm(title,msg,label="Confirm"){return new Promise(resolve=>{let {dlg,host}=modal(title,msg,`<p class="muted">${esc(msg)}</p><div class="formactions"><button class="button" data-no>Cancel</button><button class="primary" data-yes>${esc(label)}</button></div>`);$("[data-no]",host).onclick=()=>{dlg.close();resolve(false)};$("[data-yes]",host).onclick=()=>{dlg.close();resolve(true)}})}
+function download(name,text,type="text/plain"){let a=document.createElement("a"),u=URL.createObjectURL(new Blob([text],{type}));a.href=u;a.download=name;a.click();URL.revokeObjectURL(u)}
+function backup(){return JSON.stringify({app:"MindStack",schemaVersion:1,exportedAt:new Date().toISOString(),data},null,2)}
+function importData(txt){let x;try{x=JSON.parse(txt)}catch{throw Error("Invalid JSON file.")}x=x.data||x;if(x.schemaVersion!==1||!Array.isArray(x.notes)||!Array.isArray(x.tasks)||!Array.isArray(x.bookmarks))throw Error("Unsupported MindStack backup format.");for(let k of ["folders","tags","cards","quizzes","sessions","activity"])if(!Array.isArray(x[k]||[]))throw Error("Invalid "+k+" data.");return {...defaults(),...x,settings:{...defaults().settings,...x.settings}}}
+window.MS={get:()=>data,$,$$,id,esc,date,ago,toast,mutate,activeNotes,noteCreate,noteSave,noteList,taskCreate,bookmarkCreate,modal,confirm,download,backup,importData,updateStorage,getStorageMode:()=>storageMode};
+})();
